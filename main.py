@@ -17,6 +17,7 @@ class Constraint(Enum):
     empty = "empty"
     sum = "sum"
     equals = "equals"
+    unequal = "unequal"
     less = "less"
     greater = "greater"
 
@@ -120,6 +121,8 @@ def solve(puzzle: Puzzle):
             k = Int(f"k_{r}")
             for i, j in region.cells:
                 s.add(cell_values[i][j] == k)
+        elif region.constraint == Constraint.unequal:
+            s.add(Distinct([cell_values[i][j] for i,j in region.cells]))
         else:
             # sum of cells must satisfy constraint
             total = Sum(cell_values[i][j] for i,j in region.cells)
