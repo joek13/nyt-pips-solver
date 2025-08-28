@@ -60,15 +60,14 @@ def read_puzzle(source: dict) -> Puzzle:
 def solve(puzzle: Puzzle):
     s = Solver()
     m, n = puzzle.size()
+    num_tiles = 2 * len(puzzle.dominoes)
 
     def in_bounds(i, j):
         return 0 <= i < m and 0 <= j < n
 
     cell_tiles = [ [ Int(f"cd_{i}_{j}") for j in range(n) ] for i in range(m) ]
     cell_values = [ [ Int(f"cv_{i}_{j}") for j in range(n) ] for i in range(m) ]
-    num_tiles = 2 * len(puzzle.dominoes)
 
-    # maps a cell to its corresponding puzzle region
     cell_to_region = {}
     for region in puzzle.regions:
         for cell in region.cells:
@@ -79,52 +78,59 @@ def solve(puzzle: Puzzle):
             ct = cell_tiles[i][j]
             cv = cell_values[i][j]
 
+            # If the cell is out of bounds, no tiles can be placed here.
             if (i,j) not in cell_to_region:
-                # cell is out of bounds. nothing can be placed here.
                 s.add(ct == -1)
                 s.add(cv == -1)
                 continue
 
-            # let's consider assigning any tile.
+            # Let's consider assigning each tile.
             s.add(0 <= ct, ct < num_tiles)
             for tid in range(num_tiles):
-                # if tid is assigned to this cell...
+                # If tid is assigned to this cell:
+                # 1. Cell's value must match tile's value.
+                # 2. Exactly one neighbor must be the sibling tile.
+
+                # Precondition
                 is_assigned = ct == tid
                 
-                # make sure cell value matches tile value.
+                # Requirement 1
                 val_matches = cv == puzzle.dominoes[tid // 2][tid % 2]
 
-                # make sure exactly one neighbor is sibling tile
-                sibling_tid = (tid // 2) * 2 + (1 - (tid % 2)) # computes sibling tile's id
+                # Requirement 2
+                sibling_tid = (tid // 2) * 2 + (1 - (tid % 2)) # Compute sibling tile's id
                 neighbors = [ (i, j+1), (i+1, j), (i, j-1), (i-1, j) ]
                 in_bounds_neighbors = [ (k,l) for k,l in neighbors if in_bounds(k, l) ]
-                neighbor_is_sibling = [ (cell_tiles[k][l] == sibling_tid, 1) for (k,l) in in_bounds_neighbors ]
-                exactly_one_sibling_neighbor = PbEq(neighbor_is_sibling, 1)
+                num_sibling_neighbors = [ (cell_tiles[k][l] == sibling_tid, 1) for (k,l) in in_bounds_neighbors ]
+                exactly_one_sibling_neighbor = PbEq(num_sibling_neighbors, 1)
+
                 s.add(Implies(is_assigned, And(val_matches, exactly_one_sibling_neighbor)))
 
-    # each tile must be used exactly once
+    # For each tile...
     for tid in range(num_tiles):
         preds = []
         for i in range(m):
             for j in range(n):
                 preds.append((cell_tiles[i][j] == tid, 1))
+        
+        # ...exactly one cell can have this tile assigned.
         s.add(PbEq(preds, 1))
 
-    # each region can introduce some constraint
     for r, region in enumerate(puzzle.regions):
         if region.constraint == Constraint.empty:
-            # empty constraint: just in_boundsate we have a domino here
+            # empty constraint: just need to place a tile here.
             for i, j in region.cells:
                 s.add(cell_tiles[i][j] != -1)
         elif region.constraint == Constraint.equals:
-            # each cell must equal some value k
+            # equals constraint: each tile must equal some value, k.
             k = Int(f"k_{r}")
             for i, j in region.cells:
                 s.add(cell_values[i][j] == k)
         elif region.constraint == Constraint.unequal:
+            # unequal constraint: each tile must be distinct.
             s.add(Distinct([cell_values[i][j] for i,j in region.cells]))
         else:
-            # sum of cells must satisfy constraint
+            # sum, less, greater constraints: region total must satisfy constraint
             total = Sum(cell_values[i][j] for i,j in region.cells)
             target = region.target
 
