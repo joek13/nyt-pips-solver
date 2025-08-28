@@ -98,7 +98,7 @@ def solve(puzzle: Puzzle):
                 val_matches = cv == puzzle.dominoes[tid // 2][tid % 2]
 
                 # Requirement 2
-                sibling_tid = (tid // 2) * 2 + (1 - (tid % 2)) # Compute sibling tile's id
+                sibling_tid = tid ^ 1
                 neighbors = [ (i, j+1), (i+1, j), (i, j-1), (i-1, j) ]
                 in_bounds_neighbors = [ (k,l) for k,l in neighbors if in_bounds(k, l) ]
                 num_sibling_neighbors = [ (cell_tiles[k][l] == sibling_tid, 1) for (k,l) in in_bounds_neighbors ]
