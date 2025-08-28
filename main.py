@@ -1,13 +1,17 @@
 from enum import Enum
 from dataclasses import dataclass
+from datetime import datetime
 import functools
+import sys
 
 import requests
 from z3 import *
 
-Domino = tuple[int]
+# (left tile value, right tile value)
+Domino = tuple[int, int]
 
-Cell = tuple[int]
+# (row, col)
+Cell = tuple[int, int]
 
 class Constraint(Enum):
     empty = "empty"
@@ -33,6 +37,10 @@ class Puzzle:
     def extents(self):
         return max(e.extents()[0] for e in self.regions), max(e.extents()[1] for e in self.regions)
 
+    def size(self):
+        m, n = self.extents()
+        return (m+1, n+1)
+
 def read_tuples(source: list) -> list[tuple]:
     return [tuple(d) for d in source]
 
@@ -50,11 +58,14 @@ def read_puzzle(source: dict) -> Puzzle:
 
 def solve(puzzle: Puzzle):
     s = Solver()
-    e_i, e_j = puzzle.extents()
+    m, n = puzzle.size()
 
-    m, n = e_i + 1, e_j + 1
-    def valid(i, j):
+    def in_bounds(i, j):
         return 0 <= i < m and 0 <= j < n
+
+    cell_tiles = [ [ Int(f"cd_{i}_{j}") for j in range(n) ] for i in range(m) ]
+    cell_values = [ [ Int(f"cv_{i}_{j}") for j in range(n) ] for i in range(m) ]
+    num_tiles = 2 * len(puzzle.dominoes)
 
     # maps a cell to its corresponding puzzle region
     cell_to_region = {}
@@ -62,42 +73,33 @@ def solve(puzzle: Puzzle):
         for cell in region.cells:
             cell_to_region[cell] = region
 
-    # cd_i_j = id of tile located in i,j
-    cell_tiles = [ [ Int(f"cd_{i}_{j}") for j in range(n) ] for i in range(m) ]
-    # cv_i_j = value of tile located in i,j
-    cell_values = [ [ Int(f"cv_{i}_{j}") for j in range(n) ] for i in range(m) ]
-
-    num_dominoes = len(puzzle.dominoes)
-    num_tiles = 2 * num_dominoes 
-
     for i in range(m):
         for j in range(n):
             ct = cell_tiles[i][j]
             cv = cell_values[i][j]
 
-            # out of bounds; nothing can be placed here
             if (i,j) not in cell_to_region:
+                # cell is out of bounds. nothing can be placed here.
                 s.add(ct == -1)
                 s.add(cv == -1)
                 continue
 
-            # let's consider assigning any tile of any domino
+            # let's consider assigning any tile.
             s.add(0 <= ct, ct < num_tiles)
             for tid in range(num_tiles):
-                # if this tile is assigned to i,j....
-                antecedent = ct == tid
+                # if tid is assigned to this cell...
+                is_assigned = ct == tid
                 
-                # make sure cells[i][j] = this tile's value
+                # make sure cell value matches tile value.
                 val_matches = cv == puzzle.dominoes[tid // 2][tid % 2]
 
-                # make sure exactly one (valid) neighbor is sibling tile
-                sibling_tid = (tid // 2) * 2 + (1 - (tid % 2))
+                # make sure exactly one neighbor is sibling tile
+                sibling_tid = (tid // 2) * 2 + (1 - (tid % 2)) # computes sibling tile's id
                 neighbors = [ (i, j+1), (i+1, j), (i, j-1), (i-1, j) ]
-                valid_neighbors = [ (k,l) for k,l in neighbors if valid(k, l) ]
-                neighbor_is_sibling = [ cell_tiles[k][l] == sibling_tid for (k,l) in valid_neighbors ]
-                exactly_one_sibling_neighbor = PbEq([(n, 1) for n in neighbor_is_sibling], 1)
-
-                s.add(Implies(antecedent, And(val_matches, exactly_one_sibling_neighbor)))
+                in_bounds_neighbors = [ (k,l) for k,l in neighbors if in_bounds(k, l) ]
+                neighbor_is_sibling = [ (cell_tiles[k][l] == sibling_tid, 1) for (k,l) in in_bounds_neighbors ]
+                exactly_one_sibling_neighbor = PbEq(neighbor_is_sibling, 1)
+                s.add(Implies(is_assigned, And(val_matches, exactly_one_sibling_neighbor)))
 
     # each tile must be used exactly once
     for tid in range(num_tiles):
@@ -110,7 +112,7 @@ def solve(puzzle: Puzzle):
     # each region can introduce some constraint
     for r, region in enumerate(puzzle.regions):
         if region.constraint == Constraint.empty:
-            # empty constraint: just validate we have a domino here
+            # empty constraint: just in_boundsate we have a domino here
             for i, j in region.cells:
                 s.add(cell_tiles[i][j] != -1)
         elif region.constraint == Constraint.equals:
@@ -130,13 +132,18 @@ def solve(puzzle: Puzzle):
             else:
                 s.add(total > target)
 
-    print(s.check())
+    result = s.check()
+    if str(result) != "sat":
+        raise RuntimeError(f"Solver returned {result}!")
+
     model = s.model()
     for i in range(m):
         for j in range(n):
             v = model.evaluate(cell_values[i][j]).as_long()
             t = model.evaluate(cell_tiles[i][j]).as_long()
 
+            # if the tile to my right belongs to a different domino, separate us with a vertical pipe
+            # this makes the ASCII output slightly easier to read :)
             next_different = False
             if j < n - 1:
                 t_next = model.evaluate(cell_tiles[i][j+1]).as_long()
@@ -149,10 +156,12 @@ def solve(puzzle: Puzzle):
         print()
 
 def main():
-    url = "https://www.nytimes.com/svc/pips/v1/2025-08-23.json"
+    date = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime("%Y-%m-%d")
+    difficulty = sys.argv[2] if len(sys.argv) > 2 else "hard"
+    url = f"https://www.nytimes.com/svc/pips/v1/{date}.json"
     with requests.get(url) as resp:
         source = resp.json()
-        puzzle = read_puzzle(source["hard"])
+        puzzle = read_puzzle(source[difficulty])
         solve(puzzle)
 
 if __name__ == "__main__":
